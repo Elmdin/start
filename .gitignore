@@ -1,0 +1,8 @@
+.env
+web/config.js
+__pycache__/
+.pytest_cache/
+.DS_Store
+runs/
+.tools/
+web/sample.js

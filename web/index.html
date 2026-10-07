@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Start</title>
+<style>
+  :root { --bg:#fbfaf7; --ink:#1c1b19; --muted:#6b675f; --line:#dedad0; --card:#fff;
+          --ok:#1f7a4d; --warn:#9a6200; --bad:#a3312b; --spine:#1d4f91; --spine-bg:#e8f0fb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#161513; --ink:#ece9e2; --muted:#9d988d; --line:#34322d; --card:#1f1e1b;
+            --ok:#5fc48f; --warn:#e0a94a; --bad:#ef7f77; --spine:#8fb8f2; --spine-bg:#1e2c40; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui, sans-serif; }
+  main { max-width:1000px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:1.5rem; margin:0 0 4px; }
+  h2 { font-size:1rem; margin:0 0 10px; }
+  h3 { font-size:.95rem; margin:0 0 4px; }
+  p { margin:0 0 8px; }
+  .sub { color:var(--muted); margin:0 0 12px; }
+  .legal { color:var(--warn); border:1px solid currentColor; border-radius:8px; padding:8px 12px;
+           font-size:.9rem; margin:0 0 16px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+  section.queue { border-color:var(--spine); border-width:2px; }
+  .badge { display:inline-block; font-size:.72rem; font-weight:600; letter-spacing:.03em; text-transform:uppercase;
+           padding:2px 8px; border-radius:99px; border:1px solid currentColor; margin:0 6px 0 0; vertical-align:middle;
+           white-space:nowrap; }
+  .b-ok { color:var(--ok); } .b-warn { color:var(--warn); } .b-bad { color:var(--bad); }
+  .b-spine { color:var(--spine); } .b-muted { color:var(--muted); }
+  .note { color:var(--muted); font-size:.9rem; }
+  .err { color:var(--bad); font-size:.9rem; margin-top:6px; }
+  .feed { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+  button { font:inherit; cursor:pointer; }
+  button.pick, button.opt { padding:6px 12px; border-radius:6px; border:1px solid var(--line);
+           background:transparent; color:var(--ink); text-align:left; }
+  button.pick.sel, button.opt.rec { border-color:var(--spine); background:var(--spine-bg); color:var(--spine); }
+  button.opt.chosen { border-color:var(--ok); color:var(--ok); font-weight:600; background:transparent; }
+  button:disabled { opacity:.6; cursor:default; }
+  .pick small { display:block; color:var(--muted); font-size:.75rem; }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:10px; }
+  .stat { border:1px solid var(--line); border-radius:8px; padding:10px; }
+  .stat b { display:block; font-size:1.4rem; font-variant-numeric:tabular-nums; }
+  .stat span { color:var(--muted); font-size:.8rem; }
+  .item { padding:10px 0; border-top:1px dashed var(--line); }
+  .item:first-of-type { border-top:0; }
+  .opts { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+  .cols { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:720px) { .cols { grid-template-columns:1fr; } }
+  ul { margin:6px 0 0; padding-left:20px; }
+  li { margin-bottom:4px; }
+  a { color:var(--spine); overflow-wrap:anywhere; }
+  details { border-top:1px dashed var(--line); padding:8px 0; }
+  details:first-of-type { border-top:0; }
+  summary { cursor:pointer; font-weight:600; }
+  pre { margin:8px 0 0; padding:12px; background:var(--bg); border:1px solid var(--line); border-radius:8px;
+        overflow-x:auto; font:13px/1.45 ui-monospace, Menlo, monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+  .idea { border-left:3px solid var(--line); padding-left:10px; color:var(--muted); margin-top:8px; overflow-wrap:anywhere; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Start</h1>
+  <p class="sub">You steer, the agent does the rest. One idea in; a launch packet and a short list of decisions out.</p>
+  <p class="legal">Not legal, tax or investment advice. Nothing is filed or sent.</p>
+  <p class="note" id="status">Loading…</p>
+  <div class="feed" id="feed"></div>
+  <div id="view"></div>
+</main>
+<script src="config.js" onerror="this.remove()"></script>
+<script src="latest.js" onerror="this.remove()"></script>
+<script>
+(function () {
+  'use strict';
+
+  var TABLE = '/rest/v1/papers';
+  var state = { packets: [], decisions: {}, selected: null, online: false };
+
+  // ---- safe accessors: every row is untrusted -------------------------------
+  function str(v) { return typeof v === 'string' ? v : (typeof v === 'number' ? String(v) : ''); }
+  function list(v) { return Array.isArray(v) ? v : []; }
+  function obj(v) { return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }
+  function num(v) { return typeof v === 'number' && isFinite(v) ? v : 0; }
+  function safeUrl(v) { var s = str(v).trim(); return /^https?:\/\//i.test(s) ? s : ''; }
+
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined && text !== null) node.textContent = str(text);
+    return node;
+  }
+  function add(parent) {
+    for (var i = 1; i < arguments.length; i++) if (arguments[i]) parent.appendChild(arguments[i]);
+    return parent;
+  }
+  function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+  function badge(text, tone) { return el('span', 'badge b-' + tone, text); }
+  function section(title, cls) {
+    var s = el('section', cls || '');
+    s.appendChild(el('h2', '', title));
+    return s;
+  }
+
+  // ---- data -----------------------------------------------------------------
+  function config() {
+    var c = obj(window.START_CONFIG);
+    var url = safeUrl(c.supabaseUrl).replace(/\/+$/, '');
+    var key = str(c.anonKey);
+    return url && key ? { url: url, key: key } : null;
+  }
+  function headers(cfg, extra) {
+    var h = { apikey: cfg.key, Authorization: 'Bearer ' + cfg.key };
+    for (var k in extra) h[k] = extra[k];
+    return h;
+  }
+  function isPacketRow(row) {
+    var spec = obj(obj(row).spec);
+    return spec.kind === 'startup-packet' && spec.packet && typeof spec.packet === 'object';
+  }
+  function decisionKey(packetId, decisionId) { return str(packetId) + '::' + str(decisionId); }
+
+  function ingest(rows) {
+    var packets = [], decisions = {};
+    // rows arrive newest first; the first decision seen per key is the latest
+    list(rows).forEach(function (row) {
+      try {
+        var spec = obj(obj(row).spec);
+        if (isPacketRow(row)) packets.push(row);
+        else if (spec.kind === 'startup-decision') {
+          var key = decisionKey(spec.packet_id, spec.decision_id);
+          if (!(key in decisions) && str(spec.choice)) decisions[key] = str(spec.choice);
+        }
+      } catch (e) { console.warn('skipped malformed row', e); }
+    });
+    state.packets = packets;
+    state.decisions = decisions;
+    if (!packets.some(function (p) { return p.id === state.selected; })) {
+      state.selected = packets.length ? packets[0].id : null;
+    }
+  }
+
+  function setStatus(text) { document.getElementById('status').textContent = text; }
+
+  function useOffline(reason) {
+    state.online = false;
+    var latest = window.START_LATEST;
+    if (isPacketRow(latest)) {
+      ingest([latest]);
+      setStatus('Offline copy (' + reason + '). Decisions cannot be saved from this view.');
+    } else {
+      ingest([]);
+      setStatus('No packets to show (' + reason + '). Run the worker to produce one.');
+    }
+    render();
+  }
+
+  function load() {
+    var cfg = config();
+    if (!cfg) { useOffline('no Supabase config'); return; }
+    fetch(cfg.url + TABLE + '?select=*&spec->>kind=in.(startup-packet,startup-decision)&order=created_at.desc&limit=200', { headers: headers(cfg) })
+      .then(function (res) {
+        if (!res.ok) throw new Error('feed returned HTTP ' + res.status);
+        return res.json();
+      })
+      .then(function (rows) {
+        state.online = true;
+        ingest(rows);
+        if (!state.packets.length && isPacketRow(window.START_LATEST)) {
+          useOffline('feed has no packets yet');
+          return;
+        }
+        setStatus(state.packets.length
+          ? state.packets.length + ' packet' + (state.packets.length === 1 ? '' : 's') + ' in the feed.'
+          : 'The feed is empty. Run the worker to produce a packet.');
+        render();
+      })
+      .catch(function (err) {
+        console.error(err);
+        useOffline('feed unreachable: ' + (err && err.message ? err.message : 'unknown error'));
+      });
+  }
+
+  function saveDecision(packetId, decisionId, choice) {
+    var cfg = config();
+    if (!cfg || !state.online) return Promise.reject(new Error('Not connected to the feed, so this cannot be saved.'));
+    var body = { title: 'decision', spec: { kind: 'startup-decision', packet_id: packetId, decision_id: decisionId, choice: choice } };
+    return fetch(cfg.url + TABLE, {
+      method: 'POST',
+      headers: headers(cfg, { 'Content-Type': 'application/json', Prefer: 'return=representation' }),
+      body: JSON.stringify(body)
+    }).then(function (res) {
+      if (!res.ok) throw new Error('Could not save the decision (HTTP ' + res.status + ').');
+      return res.json();
+    });
+  }
+
+  // ---- rendering ------------------------------------------------------------
+  function renderFeed() {
+    var feed = document.getElementById('feed');
+    clear(feed);
+    state.packets.forEach(function (row) {
+      var company = obj(obj(obj(row.spec).packet).company);
+      var b = el('button', 'pick' + (row.id === state.selected ? ' sel' : ''));
+      b.type = 'button';
+      b.appendChild(document.createTextNode(str(company.name) || str(row.title) || 'Untitled'));
+      var when = str(row.created_at);
+      var d = when ? new Date(when) : null;
+      if (d && !isNaN(d.getTime())) b.appendChild(el('small', '', d.toLocaleString()));
+      b.addEventListener('click', function () { state.selected = row.id; render(); });
+      feed.appendChild(b);
+    });
+  }
+
+  function renderHeader(row, spec, packet) {
+    var company = obj(packet.company);
+    var s = el('section');
+    var h = el('h2', '', str(company.name) || str(row.title) || 'Untitled');
+    h.style.fontSize = '1.25rem';
+    var worker = str(spec.worker);
+    var meta = el('p');
+    add(meta,
+      worker === 'agent37' ? badge('Agent37 worker', 'ok')
+        : worker === 'openai-direct' ? badge('OpenAI direct, no browsing', 'warn')
+        : badge('worker unknown', 'muted'),
+      str(company.sector) ? badge(str(company.sector), 'spine') : null,
+      str(company.jurisdiction) ? badge(str(company.jurisdiction), 'muted') : null);
+    add(s, h, el('p', '', company.one_liner), meta);
+    if (str(spec.idea)) {
+      add(s, el('p', 'note', 'The idea as given:'), el('p', 'idea', spec.idea));
+    }
+    return s;
+  }
+
+  function stat(value, label) {
+    var d = el('div', 'stat');
+    add(d, el('b', '', String(value)), el('span', '', label));
+    return d;
+  }
+
+  function renderAudit(spec) {
+    var audit = obj(spec.audit), w = obj(audit.workload), src = obj(audit.sources);
+    var s = section('Self-check');
+    var grid = el('div', 'stats');
+    add(grid,
+      stat(num(w.agent), 'tasks the agent did'),
+      stat(num(w.ceo), 'tasks for you'),
+      stat(num(w.professional), 'need a professional'),
+      stat(num(audit.decisions), 'decisions waiting'),
+      stat(num(src.verified) + ' / ' + num(src.claimed), 'sources that resolved'),
+      stat(num(src.downgraded), 'downgraded to unverified'));
+    add(s, grid, el('p', 'note',
+      'A source keeps its "sourced" label only if its link is a web address that loads. Everything else is marked unverified.'));
+    s.lastChild.style.marginTop = '10px';
+    return s;
+  }
+
+  function renderDecisions(row, packet) {
+    var decisions = list(packet.decisions);
+    var s = section('Decisions for you (' + decisions.length + ')', 'queue');
+    if (!decisions.length) { s.appendChild(el('p', 'note', 'Nothing needs your decision.')); return s; }
+    decisions.forEach(function (raw) {
+      var d = obj(raw);
+      var item = el('div', 'item');
+      var made = state.decisions[decisionKey(row.id, d.id)];
+      add(item, el('h3', '', d.question), el('p', 'note', d.why));
+      var opts = el('div', 'opts');
+      var msg = el('p', made ? 'note' : 'err', made ? 'You chose: ' + made : '');
+      list(d.options).forEach(function (rawOpt) {
+        var opt = str(rawOpt);
+        if (!opt) return;
+        var isRec = opt === str(d.recommended);
+        var b = el('button', 'opt' + (made === opt ? ' chosen' : isRec ? ' rec' : ''),
+          opt + (isRec ? '  (recommended)' : ''));
+        b.type = 'button';
+        b.addEventListener('click', function () {
+          var buttons = opts.querySelectorAll('button');
+          buttons.forEach(function (x) { x.disabled = true; });
+          msg.className = 'note';
+          msg.textContent = 'Saving…';
+          saveDecision(row.id, str(d.id), opt).then(function () {
+            state.decisions[decisionKey(row.id, d.id)] = opt;
+            render();
+          }).catch(function (err) {
+            console.error(err);
+            buttons.forEach(function (x) { x.disabled = false; });
+            msg.className = 'err';
+            msg.textContent = err && err.message ? err.message : 'Could not save the decision.';
+          });
+        });
+        opts.appendChild(b);
+      });
+      add(item, opts, msg);
+      s.appendChild(item);
+    });
+    return s;
+  }
+
+  var OWNER = { agent: ['agent', 'ok'], ceo: ['you', 'spine'], professional: ['professional', 'warn'] };
+  var STATUS = { drafted: 'drafted', needs_decision: 'needs your decision', needs_professional: 'needs a professional' };
+
+  function renderStages(packet) {
+    var s = section('Roadmap');
+    var stages = list(packet.stages);
+    if (!stages.length) s.appendChild(el('p', 'note', 'No stages.'));
+    stages.forEach(function (raw, i) {
+      var st = obj(raw);
+      var item = el('div', 'item');
+      add(item, el('h3', '', (i + 1) + '. ' + str(st.name)), el('p', '', st.goal),
+        el('p', 'note', 'Done when: ' + str(st.exit_criteria)));
+      var ul = el('ul');
+      list(st.tasks).forEach(function (rawTask) {
+        var t = obj(rawTask);
+        var owner = OWNER[str(t.owner)] || [str(t.owner) || 'unassigned', 'muted'];
+        var li = el('li');
+        add(li, badge(owner[0], owner[1]), document.createTextNode(str(t.title) + ' '),
+          el('span', 'note', STATUS[str(t.status)] || str(t.status)));
+        ul.appendChild(li);
+      });
+      item.appendChild(ul);
+      s.appendChild(item);
+    });
+    return s;
+  }
+
+  function sourceLine(item) {
+    var p = el('p', 'note');
+    var url = safeUrl(item.source_url);
+    if (str(item.confidence) === 'sourced' && url) {
+      var a = el('a', '', url);
+      a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      add(p, badge('sourced', 'ok'), a);
+    } else {
+      add(p, badge('unverified', 'warn'), document.createTextNode('Check this before relying on it.'));
+    }
+    return p;
+  }
+
+  function renderCompliance(packet) {
+    var s = section('Legal and compliance checklist');
+    var items = list(packet.compliance);
+    if (!items.length) s.appendChild(el('p', 'note', 'No items.'));
+    items.forEach(function (raw) {
+      var c = obj(raw), item = el('div', 'item');
+      add(item, el('h3', '', c.item), el('p', '', c.why), el('p', 'note', 'When: ' + str(c.when)), sourceLine(c));
+      s.appendChild(item);
+    });
+    return s;
+  }
+
+  function renderFunding(packet) {
+    var s = section('Funding targets');
+    var items = list(packet.funding);
+    if (!items.length) s.appendChild(el('p', 'note', 'No targets.'));
+    items.forEach(function (raw) {
+      var f = obj(raw), item = el('div', 'item');
+      var h = el('h3', '', f.name);
+      if (str(f.type)) { h.appendChild(document.createTextNode(' ')); h.appendChild(badge(str(f.type), 'muted')); }
+      add(item, h, el('p', '', f.why_fit), sourceLine(f));
+      s.appendChild(item);
+    });
+    return s;
+  }
+
+  function renderHires(packet) {
+    var s = section('First hires');
+    var items = list(packet.hires);
+    if (!items.length) s.appendChild(el('p', 'note', 'No hires listed.'));
+    items.forEach(function (raw) {
+      var h = obj(raw), item = el('div', 'item');
+      var head = el('h3', '', h.role);
+      if (str(h.stage)) { head.appendChild(document.createTextNode(' ')); head.appendChild(badge(str(h.stage), 'muted')); }
+      add(item, head, el('p', '', h.why));
+      s.appendChild(item);
+    });
+    return s;
+  }
+
+  function renderDrafts(packet) {
+    var s = section('Drafts the agent wrote');
+    var items = list(packet.drafts);
+    if (!items.length) s.appendChild(el('p', 'note', 'No drafts.'));
+    items.forEach(function (raw) {
+      var d = obj(raw), det = el('details');
+      var sum = el('summary', '', str(d.title) || 'Untitled draft');
+      if (str(d.kind)) { sum.appendChild(document.createTextNode(' ')); sum.appendChild(badge(str(d.kind), 'muted')); }
+      add(det, sum, el('pre', '', d.body));
+      s.appendChild(det);
+    });
+    return s;
+  }
+
+  function renderLimits(packet) {
+    var s = section('Limits');
+    var ul = el('ul');
+    list(packet.limits).forEach(function (l) { if (str(l)) ul.appendChild(el('li', '', l)); });
+    ul.appendChild(el('li', '', 'Not legal, tax or investment advice. Nothing is filed or sent.'));
+    s.appendChild(ul);
+    return s;
+  }
+
+  function render() {
+    renderFeed();
+    var view = document.getElementById('view');
+    clear(view);
+    var row = state.packets.filter(function (p) { return p.id === state.selected; })[0];
+    if (!row) return;
+    var spec = obj(row.spec), packet = obj(spec.packet);
+    var parts = [
+      function () { return renderHeader(row, spec, packet); },
+      function () { return renderDecisions(row, packet); },
+      function () { return renderAudit(spec); },
+      function () { return renderStages(packet); },
+      function () {
+        var cols = el('div', 'cols');
+        add(cols, renderCompliance(packet), renderFunding(packet));
+        return cols;
+      },
+      function () { return renderHires(packet); },
+      function () { return renderDrafts(packet); },
+      function () { return renderLimits(packet); }
+    ];
+    parts.forEach(function (build) {
+      try { view.appendChild(build()); }
+      catch (e) {
+        console.error('section failed to render', e);
+        view.appendChild(el('p', 'err', 'One section of this packet is malformed and was skipped.'));
+      }
+    });
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>
