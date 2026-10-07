@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import socket
+import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -138,6 +140,41 @@ def supabase_select(url: str, anon_key: str, table: str, query: dict[str, str]) 
     if not isinstance(rows, list):
         raise ClientError("Supabase returned something other than a list of rows")
     return rows
+
+
+# --- Monid (tool gateway) ----------------------------------------------------
+
+MONID_SEARCH = ("keenable", "/v1/search")  # $0.004 per search when inspected on 7 Oct 2026
+
+
+def parse_monid_results(payload: Any) -> list[dict[str, str]]:
+    """Reduce a Monid run to title/url/snippet, dropping anything that is not an http(s) result."""
+    if not isinstance(payload, dict) or payload.get("status") != "COMPLETED":
+        status = payload.get("status") if isinstance(payload, dict) else "unreadable"
+        raise ClientError(f"Monid run ended as {status}")
+    raw = (payload.get("output") or {}).get("results") or []
+    results = []
+    for item in raw:
+        if not isinstance(item, dict) or not str(item.get("url", "")).startswith(("https://", "http://")):
+            continue
+        results.append(
+            {"title": str(item.get("title", ""))[:200], "url": item["url"], "snippet": str(item.get("snippet", ""))[:400]}
+        )
+    return results
+
+
+def monid_search(monid_bin: Path, node_dir: str, query: str, max_results: int = 5) -> list[dict[str, str]]:
+    """One web search through the Monid CLI. The query is passed as an argument, never through a shell."""
+    provider, endpoint = MONID_SEARCH
+    body = json.dumps({"query": query[:400], "max_results": max_results, "snippet_max_length": 400, "mode": "realtime"})
+    command = [str(monid_bin), "run", "-p", provider, "-e", endpoint, "-i", body, "-w", "45", "-j"]
+    env = {**os.environ, "PATH": f"{node_dir}{os.pathsep}{os.environ.get('PATH', '')}", "NO_COLOR": "1"}
+    try:
+        done = subprocess.run(command, capture_output=True, text=True, timeout=60, env=env, check=False)  # noqa: S603
+        payload = json.loads(done.stdout[done.stdout.index("{") :])
+    except (OSError, subprocess.TimeoutExpired, ValueError) as error:
+        raise ClientError(f"Monid search failed: {error}") from error
+    return parse_monid_results(payload)
 
 
 # --- Link check --------------------------------------------------------------

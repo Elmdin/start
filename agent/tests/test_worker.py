@@ -113,3 +113,67 @@ def test_run_records_measured_seconds():
     deps, saved = make_deps()
     run("an idea", deps)
     assert isinstance(saved[0]["spec"]["audit"]["seconds"], float)
+
+
+def test_search_leads_reach_research_and_structure_and_are_counted():
+    seen = {}
+    leads = [{"title": "CDTFA seller's permit", "url": "https://www.cdtfa.ca.gov/x", "snippet": "free permit"}]
+    deps, saved = make_deps(
+        search=lambda idea: leads,
+        research=lambda brief: seen.setdefault("research", brief) and ("agent37", "notes"),
+        structure=lambda task, notes: seen.setdefault("notes", notes) and make_packet(),
+    )
+    run("an idea", deps)
+    assert "https://www.cdtfa.ca.gov/x" in seen["research"]
+    assert "https://www.cdtfa.ca.gov/x" in seen["notes"]
+    assert saved[0]["spec"]["audit"]["search_results"] == 1
+
+
+def test_run_works_without_a_search_tool():
+    deps, saved = make_deps()
+    run("an idea", deps)
+    assert saved[0]["spec"]["audit"]["search_results"] == 0
+
+
+def request_row(row_id, **spec):
+    return {"id": row_id, "spec": {"kind": "startup-request", **spec}}
+
+
+def test_pending_requests_skips_answered_and_malformed():
+    from agent.worker import pending_requests
+
+    rows = [
+        request_row(3, action="new", idea="a"),
+        request_row(4, action="new", idea="b"),
+        request_row(5, action="steer", packet_id=1),
+        request_row(6, action="delete-everything"),
+        {"id": 7, "spec": None},
+        {"id": 8, "spec": {"kind": "startup-packet", "request_id": 3}},
+        {"id": 9, "spec": {"kind": "startup-error", "request_id": 5}},
+    ]
+    assert [row["id"] for row in pending_requests(rows)] == [4]
+
+
+def test_handle_request_new_tags_the_packet_with_the_request_id():
+    from agent.worker import handle_request
+
+    deps, saved = make_deps()
+    handle_request(request_row(4, action="new", idea="an idea"), deps, load_steer=None)
+    assert saved[0]["spec"]["request_id"] == 4
+
+
+def test_handle_request_steer_tags_the_revision():
+    from agent.worker import handle_request
+
+    deps, saved = make_deps()
+    handle_request(request_row(5, action="steer", packet_id=1), deps, load_steer=lambda pid: (packet_row(), {"entity": "LLC"}))
+    assert saved[0]["spec"]["request_id"] == 5 and saved[0]["spec"]["revision_of"] == 1
+
+
+def test_handle_request_failure_is_saved_as_an_error_row():
+    from agent.worker import handle_request
+
+    deps, saved = make_deps()
+    handle_request(request_row(4, action="new", idea="   "), deps, load_steer=None)
+    assert saved[0]["title"] == "error"
+    assert saved[0]["spec"] == {"kind": "startup-error", "request_id": 4, "message": "The idea is empty."}

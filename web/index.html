@@ -55,6 +55,16 @@
   summary { cursor:pointer; font-weight:600; }
   pre { margin:8px 0 0; padding:12px; background:var(--bg); border:1px solid var(--line); border-radius:8px;
         overflow-x:auto; font:13px/1.45 ui-monospace, Menlo, monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+  textarea { width:100%; min-height:84px; padding:10px; border-radius:8px; border:1px solid var(--line);
+             background:var(--bg); color:var(--ink); font:inherit; resize:vertical; }
+  button.primary { padding:8px 16px; border-radius:6px; border:1px solid var(--spine);
+                   background:var(--spine); color:var(--bg); font-weight:600; margin-top:8px; }
+  button.steer { margin-top:12px; }
+  .working { border:1px dashed var(--spine); border-radius:10px; padding:12px 16px; margin-bottom:16px; }
+  .working:empty { display:none; }
+  .working .job { padding:8px 0; border-top:1px dashed var(--line); }
+  .working .job:first-child { border-top:0; }
+  .working .job p { margin:0 0 2px; overflow-wrap:anywhere; }
   .idea { border-left:3px solid var(--line); padding-left:10px; color:var(--muted); margin-top:8px; overflow-wrap:anywhere; }
 </style>
 </head>
@@ -63,6 +73,13 @@
   <h1>Start</h1>
   <p class="sub">You steer, the agent does the rest. One idea in; a launch packet and a short list of decisions out.</p>
   <p class="legal">Not legal, tax or investment advice. Nothing is filed or sent.</p>
+  <section id="ask">
+    <h2><label for="idea">What's the idea?</label></h2>
+    <textarea id="idea" maxlength="4000" placeholder="Describe the company in a sentence or two"></textarea>
+    <button type="button" class="primary" id="send">Hand it to the agent</button>
+    <p class="note" id="ideaMsg"></p>
+  </section>
+  <div class="working" id="working"></div>
   <p class="note" id="status">Loading…</p>
   <div class="feed" id="feed"></div>
   <div id="view"></div>
@@ -74,7 +91,10 @@
   'use strict';
 
   var TABLE = '/rest/v1/papers';
-  var state = { packets: [], decisions: {}, selected: null, online: false };
+  var KINDS = 'startup-packet,startup-decision,startup-request,startup-error';
+  var POLL_MS = 6000, STALE_MS = 15 * 60 * 1000, ERROR_WINDOW_MS = 60 * 60 * 1000;
+  var state = { packets: [], decisions: {}, requests: [], errors: [], pending: {}, selected: null,
+                online: false, loading: false, sig: '', timer: null };
 
   // ---- safe accessors: every row is untrusted -------------------------------
   function str(v) { return typeof v === 'string' ? v : (typeof v === 'number' ? String(v) : ''); }
@@ -120,36 +140,73 @@
   function decisionKey(packetId, decisionId) { return str(packetId) + '::' + str(decisionId); }
 
   function ingest(rows) {
-    var packets = [], decisions = {};
+    var packets = [], decisions = {}, requests = [], errors = [], answered = {}, arrived = null;
+    var wasPending = state.pending;
     // rows arrive newest first; the first decision seen per key is the latest
     list(rows).forEach(function (row) {
       try {
         var spec = obj(obj(row).spec);
-        if (isPacketRow(row)) packets.push(row);
-        else if (spec.kind === 'startup-decision') {
+        if (isPacketRow(row)) {
+          packets.push(row);
+          var answers = str(spec.request_id);
+          if (answers) {
+            answered[answers] = true;
+            if (arrived === null && wasPending[answers]) arrived = row.id;
+          }
+        } else if (spec.kind === 'startup-decision') {
           var key = decisionKey(spec.packet_id, spec.decision_id);
           if (!(key in decisions) && str(spec.choice)) decisions[key] = str(spec.choice);
+        } else if (spec.kind === 'startup-request' && str(obj(row).id)) {
+          if (spec.action === 'new' && str(spec.idea)) requests.push(row);
+          else if (spec.action === 'steer' && num(spec.packet_id)) requests.push(row);
+        } else if (spec.kind === 'startup-error' && str(spec.request_id)) {
+          answered[str(spec.request_id)] = true;
+          errors.push(row);
         }
       } catch (e) { console.warn('skipped malformed row', e); }
     });
+    var pending = {};
+    requests.forEach(function (r) { if (!answered[str(r.id)]) pending[str(r.id)] = true; });
     state.packets = packets;
     state.decisions = decisions;
+    state.requests = requests;
+    state.errors = errors;
+    state.pending = pending;
+    if (arrived !== null) state.selected = arrived;  // the answer to something you asked for
     if (!packets.some(function (p) { return p.id === state.selected; })) {
       state.selected = packets.length ? packets[0].id : null;
     }
   }
 
+  function signature(rows) {
+    var top = 0;
+    list(rows).forEach(function (r) { var id = num(obj(r).id); if (id > top) top = id; });
+    return list(rows).length + ':' + top;
+  }
+  function pendingRequests() {
+    return state.requests.filter(function (r) { return state.pending[str(r.id)]; });
+  }
+  function steerPending(packetId) {
+    return pendingRequests().some(function (r) {
+      var spec = obj(r.spec);
+      return spec.action === 'steer' && str(spec.packet_id) === str(packetId);
+    });
+  }
+
   function setStatus(text) { document.getElementById('status').textContent = text; }
 
   function useOffline(reason) {
+    var sig = 'offline:' + reason;
     state.online = false;
+    if (state.sig === sig) { renderAsk(); return; }  // same failure as last poll: nothing new to draw
+    state.sig = sig;
     var latest = window.START_LATEST;
     if (isPacketRow(latest)) {
       ingest([latest]);
-      setStatus('Offline copy (' + reason + '). Decisions cannot be saved from this view.');
+      setStatus('Offline copy (' + reason + '). Ideas and decisions cannot be sent from this view.');
     } else {
       ingest([]);
-      setStatus('No packets to show (' + reason + '). Run the worker to produce one.');
+      setStatus('No packets to show (' + reason + ').');
     }
     render();
   }
@@ -157,44 +214,144 @@
   function load() {
     var cfg = config();
     if (!cfg) { useOffline('no Supabase config'); return; }
-    fetch(cfg.url + TABLE + '?select=*&spec->>kind=in.(startup-packet,startup-decision)&order=created_at.desc&limit=200', { headers: headers(cfg) })
+    if (state.loading) return;
+    state.loading = true;
+    fetch(cfg.url + TABLE + '?select=*&spec->>kind=in.(' + KINDS + ')&order=created_at.desc&limit=200', { headers: headers(cfg) })
       .then(function (res) {
         if (!res.ok) throw new Error('feed returned HTTP ' + res.status);
         return res.json();
       })
       .then(function (rows) {
+        state.loading = false;
         state.online = true;
+        var sig = signature(rows);
+        if (sig === state.sig) { renderAsk(); renderWorking(); return; }  // unchanged: keep the view as it is
+        state.sig = sig;
         ingest(rows);
         if (!state.packets.length && isPacketRow(window.START_LATEST)) {
-          useOffline('feed has no packets yet');
-          return;
+          // Nothing in the feed yet: show the saved copy, but stay connected so an idea can be sent.
+          state.packets = [window.START_LATEST];
+          state.selected = window.START_LATEST.id;
+          setStatus('The feed has no packets yet. Showing the last saved copy.');
+        } else {
+          setStatus(state.packets.length
+            ? state.packets.length + ' packet' + (state.packets.length === 1 ? '' : 's') + ' in the feed.'
+            : 'The feed is empty. Describe an idea above to get the first packet.');
         }
-        setStatus(state.packets.length
-          ? state.packets.length + ' packet' + (state.packets.length === 1 ? '' : 's') + ' in the feed.'
-          : 'The feed is empty. Run the worker to produce a packet.');
         render();
       })
       .catch(function (err) {
+        state.loading = false;
         console.error(err);
         useOffline('feed unreachable: ' + (err && err.message ? err.message : 'unknown error'));
       });
   }
 
-  function saveDecision(packetId, decisionId, choice) {
+  function startPolling() {
+    if (state.timer !== null || !config()) return;  // one timer only; nothing to poll without a feed
+    state.timer = setInterval(load, POLL_MS);
+  }
+
+  function postRow(body, what) {
     var cfg = config();
-    if (!cfg || !state.online) return Promise.reject(new Error('Not connected to the feed, so this cannot be saved.'));
-    var body = { title: 'decision', spec: { kind: 'startup-decision', packet_id: packetId, decision_id: decisionId, choice: choice } };
+    if (!cfg || !state.online) return Promise.reject(new Error('Not connected to the feed, so this cannot be sent.'));
     return fetch(cfg.url + TABLE, {
       method: 'POST',
       headers: headers(cfg, { 'Content-Type': 'application/json', Prefer: 'return=representation' }),
       body: JSON.stringify(body)
     }).then(function (res) {
-      if (!res.ok) throw new Error('Could not save the decision (HTTP ' + res.status + ').');
+      if (!res.ok) throw new Error('Could not ' + what + ' (HTTP ' + res.status + ').');
       return res.json();
     });
   }
 
+  function saveDecision(packetId, decisionId, choice) {
+    return postRow({ title: 'decision', spec: { kind: 'startup-decision', packet_id: packetId, decision_id: decisionId, choice: choice } },
+      'save the decision');
+  }
+
+  // A request the page just created counts as pending straight away, before the next poll sees it.
+  function noteRequest(saved, fallbackSpec) {
+    var row = obj(list(saved)[0]);
+    if (!str(row.id)) return;
+    if (!obj(row.spec).kind) row = { id: row.id, created_at: row.created_at, spec: fallbackSpec };
+    if (!str(row.created_at)) row.created_at = new Date().toISOString();
+    state.requests = [row].concat(state.requests);
+    state.pending[str(row.id)] = true;
+  }
+
+  function sendIdea(idea) {
+    var spec = { kind: 'startup-request', action: 'new', idea: idea };
+    return postRow({ title: 'request', spec: spec }, 'send the idea').then(function (saved) { noteRequest(saved, spec); });
+  }
+
+  function sendSteer(packetId) {
+    var spec = { kind: 'startup-request', action: 'steer', packet_id: packetId };
+    return postRow({ title: 'request', spec: spec }, 'send the request').then(function (saved) { noteRequest(saved, spec); });
+  }
+
   // ---- rendering ------------------------------------------------------------
+  function elapsed(since) {
+    var d = str(since) ? new Date(since) : null;
+    if (!d || isNaN(d.getTime())) return { ms: 0, text: '' };
+    var ms = Math.max(0, Date.now() - d.getTime()), s = Math.floor(ms / 1000);
+    var text = s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + (s % 60) + ' s';
+    return { ms: ms, text: text };
+  }
+  function shorten(text, max) { var s = str(text); return s.length > max ? s.slice(0, max - 1) + '…' : s; }
+
+  function renderAsk() {
+    var box = document.getElementById('idea'), send = document.getElementById('send');
+    var msg = document.getElementById('ideaMsg');
+    var busy = send.getAttribute('data-busy') === '1';
+    box.disabled = !state.online || busy;
+    send.disabled = !state.online || busy;
+    if (!state.online) {
+      msg.className = 'note';
+      msg.textContent = 'Not connected to the feed, so an idea cannot be sent from this view.';
+    } else if (msg.getAttribute('data-offline') === '1' || !msg.textContent) {
+      msg.className = 'note';
+      msg.textContent = 'The agent researches, drafts and checks its sources on its own. You get back only the decisions.';
+    }
+    msg.setAttribute('data-offline', state.online ? '0' : '1');
+  }
+
+  function renderWorking() {
+    var box = document.getElementById('working');
+    clear(box);
+    try {
+      pendingRequests().slice(0, 5).forEach(function (r) {
+        var spec = obj(r.spec), job = el('div', 'job'), t = elapsed(r.created_at);
+        if (spec.action === 'steer') {
+          add(job, el('p', '', 'Reworking packet #' + num(spec.packet_id) + ' around your decisions'));
+        } else {
+          add(job, el('p', '', shorten(spec.idea, 140)),
+            el('p', 'note', 'The agent is researching. This usually takes 3 to 5 minutes.'));
+        }
+        if (t.text) add(job, el('p', 'note', 'Asked ' + t.text + ' ago.'));
+        if (t.ms > STALE_MS) add(job, el('p', 'err', 'Still no answer. Check that the worker is running.'));
+        box.appendChild(job);
+      });
+      var shown = 0;
+      state.errors.forEach(function (row) {
+        var spec = obj(row.spec), t = elapsed(row.created_at);
+        if (shown >= 5 || t.ms > ERROR_WINDOW_MS) return;
+        shown += 1;
+        var asked = state.requests.filter(function (r) { return str(r.id) === str(spec.request_id); })[0];
+        var about = asked ? obj(asked.spec) : {};
+        var label = about.action === 'steer' ? 'Reworking packet #' + num(about.packet_id)
+          : str(about.idea) ? shorten(about.idea, 140) : 'Request #' + str(spec.request_id);
+        var job = el('div', 'job');
+        add(job, el('p', '', label),
+          el('p', 'err', 'The agent could not finish this: ' + (shorten(spec.message, 400) || 'no reason given')));
+        box.appendChild(job);
+      });
+    } catch (e) {
+      console.error('working strip failed to render', e);
+      box.appendChild(el('p', 'err', 'The list of requests in progress could not be shown.'));
+    }
+  }
+
   function renderFeed() {
     var feed = document.getElementById('feed');
     clear(feed);
@@ -203,6 +360,7 @@
       var b = el('button', 'pick' + (row.id === state.selected ? ' sel' : ''));
       b.type = 'button';
       b.appendChild(document.createTextNode(str(company.name) || str(row.title) || 'Untitled'));
+      if (num(obj(row.spec).revision_of)) b.appendChild(document.createTextNode(' (revised)'));
       var when = str(row.created_at);
       var d = when ? new Date(when) : null;
       if (d && !isNaN(d.getTime())) b.appendChild(el('small', '', d.toLocaleString()));
@@ -222,9 +380,15 @@
       worker === 'agent37' ? badge('Agent37 worker', 'ok')
         : worker === 'openai-direct' ? badge('OpenAI direct, no browsing', 'warn')
         : badge('worker unknown', 'muted'),
+      num(obj(spec.audit).search_results) ? badge('Monid live search', 'ok') : null,
       str(company.sector) ? badge(str(company.sector), 'spine') : null,
       str(company.jurisdiction) ? badge(str(company.jurisdiction), 'muted') : null);
     add(s, h, el('p', '', company.one_liner), meta);
+    var decided = obj(spec.decided), decidedKeys = Object.keys(decided);
+    if (num(spec.revision_of) && decidedKeys.length) {
+      add(s, el('p', 'note', 'Reworked from packet #' + num(spec.revision_of) + ' after you decided: ' +
+        decidedKeys.map(function (k) { return str(k) + ' = ' + str(decided[k]); }).join('; ')));
+    }
     if (str(spec.idea)) {
       add(s, el('p', 'note', 'The idea as given:'), el('p', 'idea', spec.idea));
     }
@@ -247,7 +411,9 @@
       stat(num(w.professional), 'need a professional'),
       stat(num(audit.decisions), 'decisions waiting'),
       stat(num(src.verified) + ' / ' + num(src.claimed), 'sources that resolved'),
-      stat(num(src.downgraded), 'downgraded to unverified'));
+      stat(num(src.downgraded), 'downgraded to unverified'),
+      num(audit.seconds) ? stat(Math.round(num(audit.seconds)) + ' s', 'agent run time, measured') : null,
+      num(audit.search_results) ? stat(num(audit.search_results), 'live search results read') : null);
     add(s, grid, el('p', 'note',
       'A source keeps its "sourced" label only if its link is a web address that loads. Everything else is marked unverified.'));
     s.lastChild.style.marginTop = '10px';
@@ -292,7 +458,35 @@
       add(item, opts, msg);
       s.appendChild(item);
     });
+    s.appendChild(renderSteer(row, decisions));
     return s;
+  }
+
+  function renderSteer(row, decisions) {
+    var wrap = el('div', 'item');
+    var decidedAny = decisions.some(function (raw) { return !!state.decisions[decisionKey(row.id, obj(raw).id)]; });
+    var waiting = steerPending(row.id);
+    var b = el('button', 'primary steer', 'Rework the plan around my decisions');
+    var note = el('p', 'note',
+      waiting ? 'The agent is reworking this plan. The new version will appear here when it is ready.'
+        : !state.online ? 'Not connected to the feed, so this cannot be sent.'
+        : decidedAny ? 'The agent will rebuild the roadmap, checklist and drafts around what you chose.'
+        : 'Answer at least one decision first.');
+    b.type = 'button';
+    b.disabled = !decidedAny || waiting || !state.online;
+    b.addEventListener('click', function () {
+      b.disabled = true;
+      note.className = 'note';
+      note.textContent = 'Sending…';
+      sendSteer(row.id).then(function () { render(); }).catch(function (err) {
+        console.error(err);
+        b.disabled = false;
+        note.className = 'err';
+        note.textContent = err && err.message ? err.message : 'Could not send the request.';
+      });
+    });
+    add(wrap, b, note);
+    return wrap;
   }
 
   var OWNER = { agent: ['agent', 'ok'], ceo: ['you', 'spine'], professional: ['professional', 'warn'] };
@@ -398,9 +592,19 @@
     return s;
   }
 
+  function openDrafts(view) {
+    var open = {};
+    view.querySelectorAll('details').forEach(function (d, i) { if (d.open) open[i] = true; });
+    return open;
+  }
+
   function render() {
+    renderAsk();
+    renderWorking();
     renderFeed();
     var view = document.getElementById('view');
+    var keepOpen = view.getAttribute('data-packet') === str(state.selected) ? openDrafts(view) : {};
+    view.setAttribute('data-packet', str(state.selected));
     clear(view);
     var row = state.packets.filter(function (p) { return p.id === state.selected; })[0];
     if (!row) return;
@@ -426,9 +630,44 @@
         view.appendChild(el('p', 'err', 'One section of this packet is malformed and was skipped.'));
       }
     });
+    view.querySelectorAll('details').forEach(function (d, i) { if (keepOpen[i]) d.open = true; });
   }
 
+  function wireAsk() {
+    var box = document.getElementById('idea'), send = document.getElementById('send');
+    var msg = document.getElementById('ideaMsg');
+    send.addEventListener('click', function () {
+      var idea = box.value.trim();
+      if (!idea) {
+        msg.className = 'err';
+        msg.textContent = 'Write the idea first.';
+        box.focus();
+        return;
+      }
+      send.setAttribute('data-busy', '1');
+      msg.className = 'note';
+      msg.textContent = 'Sending…';
+      renderAsk();
+      sendIdea(idea).then(function () {
+        send.setAttribute('data-busy', '0');
+        box.value = '';
+        msg.className = 'note';
+        msg.textContent = 'Sent. The agent has it; the packet will open here when it is ready.';
+        renderAsk();
+        renderWorking();
+      }).catch(function (err) {
+        console.error(err);
+        send.setAttribute('data-busy', '0');
+        renderAsk();
+        msg.className = 'err';
+        msg.textContent = err && err.message ? err.message : 'Could not send the idea.';
+      });
+    });
+  }
+
+  wireAsk();
   load();
+  startPolling();
 })();
 </script>
 </body>

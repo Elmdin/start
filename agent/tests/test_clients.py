@@ -41,3 +41,20 @@ def test_redirect_to_private_host_is_refused():
     handler = clients._PublicRedirects()
     with pytest.raises(clients.urllib.error.URLError):
         handler.redirect_request(None, None, 302, "Found", {}, "http://127.0.0.1:9/x")
+
+
+def test_parse_monid_results_keeps_only_http_results():
+    payload = {"status": "COMPLETED", "output": {"results": [
+        {"title": "A", "url": "https://a.example/x", "snippet": "s" * 900},
+        {"title": "B", "url": "javascript:alert(1)", "snippet": "x"},
+        {"title": "C"},
+        "junk",
+    ]}}
+    results = clients.parse_monid_results(payload)
+    assert [r["url"] for r in results] == ["https://a.example/x"]
+    assert len(results[0]["snippet"]) == 400
+
+
+def test_parse_monid_results_rejects_unfinished_runs():
+    with pytest.raises(clients.ClientError, match="FAILED"):
+        clients.parse_monid_results({"status": "FAILED"})
