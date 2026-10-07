@@ -30,8 +30,8 @@ Finalists show: what they replaced, how the agent works, how much time it saves.
 ## Sponsor plan (build in this order; stop when time runs out)
 | # | Sponsor | Job in the app | Needed for | Status (7 Oct, about 3:30 PM) |
 |---|---|---|---|---|
-| 1 | Agent37 | The unattended research worker: takes the idea, browses, works through many steps, returns cited notes. Also reworks the plan when the founder's decisions are sent back. | Eligibility | **Run.** Instance created with `POST /v1/instances`, health polled, three research turns completed through `POST /v1/responses` (measured 194 s, 253 s, and 447 s for the steer rework). |
-| 2 | OpenAI | Structured output: turns the research notes into the packet JSON (`gpt-5.5`, strict JSON schema) | Eligibility (one sponsor) | **Run.** Four packets produced. |
+| 1 | Agent37 | The unattended research worker: takes the idea, browses, works through many steps, returns cited notes. Also reworks the plan when the founder's decisions are sent back. | Eligibility | **Run.** Instance created with `POST /v1/instances`, health polled, four research turns completed through `POST /v1/responses` (measured 194 s, 253 s, 325 s, and 447 s for the steer rework). |
+| 2 | OpenAI | Structured output: turns the research notes into the packet JSON (`gpt-5.5`, strict JSON schema) | Eligibility (one sponsor) | **Run.** Five packets produced. |
 | 3 | Supabase | Stores packets, the CEO's decisions and page requests; the page reads and writes the feed; the worker reads decisions and requests back | Core demo | **Run.** Rows written and read by both the worker and the page (existing `papers` table). |
 | 4 | Monid | Live web search for the agent: regulations, investors, competitors, passed in as leads | Bonus | **Run.** Keenable search endpoint through the Monid CLI; 15 results fed into one full run. |
 | 5 | InstaCloud | Would host the page as a live link | Bonus | Not tried. The repo link is the submission link. |

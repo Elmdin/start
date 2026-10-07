@@ -57,3 +57,27 @@ https://github.com/Elmdin/start
 - [ ] https://github.com/Elmdin/start opens in a private window
 - [ ] Team name, members and lead email filled in
 - [ ] Optional file uploads: at most 5 files, 10 MB each
+
+## Demo video script (about 2 minutes, screen recording of the page)
+Setup before recording: `python3 -m agent.worker --watch` running in a terminal, page open at
+http://127.0.0.1:8737. A new packet takes 3 to 5 minutes, so submit the idea first and cut, or
+show the pending strip and then open a packet that is already there.
+
+1. (15 s) "I have ideas. What I never want to do again is work out everything a company has to
+   do around one: the filings, the licences, who to hire, who to raise from, and in what order."
+2. (15 s) Type one idea, press "Hand it to the agent". Show the pending strip. "That is all I do.
+   An Agent37 worker is now researching on its own, with live web search through Monid."
+3. (30 s) Open a finished packet. Decisions first: "It hands me only what a CEO has to decide,
+   with a recommendation." Then the self-check row: tasks the agent took, tasks for me, tasks
+   that need a professional, and the measured run time.
+4. (20 s) Scroll to compliance and funding. Point at one "sourced" link and one "unverified"
+   badge. "The agent cannot mark something sourced on its own word. Code checks every link, and
+   what does not load gets downgraded."
+5. (20 s) Open a draft (one-pager or job description). "These are full first drafts."
+6. (20 s) Click a decision, press "Rework the plan around my decisions", then open the packet
+   marked "(revised)". "I steer; it redoes the plan around my choice."
+7. (10 s) "It drafts and lists; it does not file, pay or give legal advice yet. Sponsors:
+   Agent37, OpenAI, Supabase, Monid."
+
+Say only numbers that are on screen. Do not state a time-saved ratio: the manual side was never
+measured.

@@ -6,11 +6,11 @@ queue of only the decisions the CEO must make.
 Fallback entry for the "Build an Agent" Hackathon, Corgi Cafe, San Francisco, Oct 7, 2026.
 
 <!-- STATUS -->
-**Status (7 Oct 2026, 3:30 PM): works end to end on our machine.** Run today: Agent37 research
-(3 turns), OpenAI structured packets (4), Supabase feed read and written by worker and page,
+**Status (7 Oct 2026, 3:35 PM): works end to end on our machine.** Run today: Agent37 research
+(4 turns), OpenAI structured packets (5), Supabase feed read and written by worker and page,
 Monid live search (15 results in one run), the decision queue, and one steer rework of a packet
-after a saved decision. A page-submitted idea was accepted and shown as pending; see the bottom
-of this file for whether its packet came back. Not done: hosting (the page runs locally), any
+after a saved decision. An idea typed into the page was picked up by the watching worker and came
+back as a packet in 325 s with no terminal step. Not done: hosting (the page runs locally), any
 measurement of the manual workflow, and anything that files, pays or sends. 43 unit tests pass;
 the network clients are covered by the live runs, not by unit tests.
 
