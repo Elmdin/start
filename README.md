@@ -6,16 +6,24 @@ queue of only the decisions the CEO must make.
 Fallback entry for the "Build an Agent" Hackathon, Corgi Cafe, San Francisco, Oct 7, 2026.
 
 <!-- STATUS -->
-**Status: pipeline code and tests written locally; see docs for what has actually been run.**
+**Status (7 Oct 2026, 3:30 PM): works end to end on our machine.** Run today: Agent37 research
+(3 turns), OpenAI structured packets (4), Supabase feed read and written by worker and page,
+Monid live search (15 results in one run), the decision queue, and one steer rework of a packet
+after a saved decision. A page-submitted idea was accepted and shown as pending; see the bottom
+of this file for whether its packet came back. Not done: hosting (the page runs locally), any
+measurement of the manual workflow, and anything that files, pays or sends. 43 unit tests pass;
+the network clients are covered by the live runs, not by unit tests.
 
-## What it does (target)
+## What it does
 Idea in -> packet out, no human step until the decisions:
 1. Research: an Agent37 instance works through what this company has to do.
 2. Structure: OpenAI structured output turns the notes into one packet JSON.
 3. Audit, in code: a "sourced" claim whose URL is missing or does not resolve is downgraded to
    "unverified". Tasks per owner (agent / CEO / professional) are counted, not estimated.
 4. Store: the packet is written to Supabase; the page reads it as a feed.
-5. Steer: the CEO answers the decision queue.
+5. Steer: the CEO answers the decision queue on the page and presses "Rework the plan"; the
+   agent rebuilds the packet around those choices and publishes a revision.
+0. (Before research) Monid live web search gathers leads on regulations, investors, competitors.
 
 It drafts and lists. It does not file, pay, send, sign, or give legal advice.
 

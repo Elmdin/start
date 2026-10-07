@@ -58,6 +58,7 @@ as CEO, not as the person doing the admin. Rules:
 - drafts: write 2-3 real, usable first drafts in full (for example an investor one-pager, a
   first-hire job description, a 30-day plan). Not placeholders.
 - limits: state honestly what this packet does not do.
+- company.name: always propose a short, concrete working name. Never "TBD", "Unnamed" or a description.
 - If the input lists decisions the CEO has already made, they are settled: never ask them again,
   rebuild the roadmap, compliance list and drafts around the chosen options, and list only the
   new decisions those choices open up.
