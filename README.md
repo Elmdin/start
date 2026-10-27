@@ -1,5 +1,9 @@
 # Start — idea in, launch packet out
 
+> **Not legal advice.** Start is a hackathon prototype. Its checklists, drafted documents and other
+> output are machine-generated and are not legal, tax, financial or investment advice; they may be
+> wrong or out of date. Review anything it produces with a licensed professional before relying on it.
+
 An agent that takes a startup idea and returns what the founder has to do next, unattended:
 a staged roadmap, a compliance checklist, first hires, funding targets, drafted documents, and a
 queue of only the decisions the CEO must make.

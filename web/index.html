@@ -72,7 +72,7 @@
 <main>
   <h1>Start</h1>
   <p class="sub">You steer, the agent does the rest. One idea in; a launch packet and a short list of decisions out.</p>
-  <p class="legal">Not legal, tax or investment advice. Nothing is filed or sent.</p>
+  <p class="legal">Not legal, tax, financial or investment advice. The packet is machine-generated and may be wrong or out of date; review it with a licensed professional before acting on it. Nothing is filed or sent.</p>
   <section id="ask">
     <h2><label for="idea">What's the idea?</label></h2>
     <textarea id="idea" maxlength="4000" placeholder="Describe the company in a sentence or two"></textarea>
@@ -587,7 +587,7 @@
     var s = section('Limits');
     var ul = el('ul');
     list(packet.limits).forEach(function (l) { if (str(l)) ul.appendChild(el('li', '', l)); });
-    ul.appendChild(el('li', '', 'Not legal, tax or investment advice. Nothing is filed or sent.'));
+    ul.appendChild(el('li', '', 'Not legal, tax, financial or investment advice; review with a licensed professional. Nothing is filed or sent.'));
     s.appendChild(ul);
     return s;
   }
